@@ -3,59 +3,80 @@ import path from "path";
 import { spawn } from "child_process";
 import express from "express";
 import { Server as SocketIO } from "socket.io";
+import cors from "cors";
 
 const app = express();
+const app2 = express();
 const server = http.createServer(app);
 const io = new SocketIO(server);
 
-const options = [
-  "-i",
-  "-",
-  "-c:v",
-  "libx264",
-  "-preset",
-  "ultrafast",
-  "-tune",
-  "zerolatency",
-  "-r",
-  `${25}`,
-  "-g",
-  `${25 * 2}`,
-  "-keyint_min",
-  25,
-  "-crf",
-  "25",
-  "-pix_fmt",
-  "yuv420p",
-  "-sc_threshold",
-  "0",
-  "-profile:v",
-  "main",
-  "-level",
-  "3.1",
-  "-c:a",
-  "aac",
-  "-b:a",
-  "128k",
-  "-ar",
-  128000 / 4,
-  "-f",
-  "flv",
-  `rtmp://a.rtmp.youtube.com/live2/wk7e-b2gd-ymdu-1fee-cvuc`,
-];
+let ffmpegProcess;
 
-const ffmpegProcess = spawn("ffmpeg", options);
+app2.use(express.json());
+app2.use(express.urlencoded({ extended: false }));
+const corsOptions = {
+  origin: "*",
+  methods: "GET, POST, DELETE, PATCH, PUT, HEAD",
+};
 
-ffmpegProcess.stdout.on("data", (data) => {
-  console.log(`ffmpeg stdout: ${data}`);
-});
+app2.use(cors(corsOptions));
+app2.post("/api", (req, res) => {
+  const { rtmpUrl } = req.body;
+  console.log("Received RTMP URL:", rtmpUrl);
 
-ffmpegProcess.stderr.on("data", (data) => {
-  console.error(`ffmpeg stderr: ${data}`);
-});
+  const options = [
+    "-i",
+    "-",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-tune",
+    "zerolatency",
+    "-r",
+    "25",
+    "-g",
+    "50",
+    "-keyint_min",
+    "25",
+    "-crf",
+    "25",
+    "-pix_fmt",
+    "yuv420p",
+    "-sc_threshold",
+    "0",
+    "-profile:v",
+    "main",
+    "-level",
+    "3.1",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-ar",
+    "32000",
+    "-f",
+    "flv",
+    rtmpUrl,
+  ];
 
-ffmpegProcess.on("close", (code) => {
-  console.log(`ffmpeg process exited with code ${code}`);
+  // Start the ffmpeg process with the RTMP URL
+  ffmpegProcess = spawn("ffmpeg", options);
+
+  ffmpegProcess.stdout.on("data", (data) => {
+    console.log(`ffmpeg stdout: ${data}`);
+  });
+
+  ffmpegProcess.stderr.on("data", (data) => {
+    console.error(`ffmpeg stderr: ${data}`);
+  });
+
+  ffmpegProcess.on("close", (code) => {
+    console.log(`ffmpeg process exited with code ${code}`);
+    ffmpegProcess = null; // Reset the process to null when it closes
+  });
+
+  res.sendStatus(200); // Respond with success
 });
 
 app.use(express.static(path.resolve("./public")));
@@ -63,11 +84,16 @@ app.use(express.static(path.resolve("./public")));
 io.on("connection", (socket) => {
   console.log("Socket Connected", socket.id);
   socket.on("binarystream", (stream) => {
-    console.log("Binary Stream Incommming...");
-    ffmpegProcess.stdin.write(stream, (err) => {
-      if (err) console.log("Err", err);
-    });
+    if (ffmpegProcess && !ffmpegProcess.killed) {
+      console.log("Binary Stream Incoming...");
+      ffmpegProcess.stdin.write(stream, (err) => {
+        if (err) console.log("Err", err);
+      });
+    } else {
+      console.error("FFmpeg process is not running.");
+    }
   });
 });
 
-server.listen(3000, () => console.log(`HTTP Server is runnning on PORT 3000`));
+app2.listen(4000, () => console.log(`API Server is running on PORT 4000`));
+server.listen(3000, () => console.log(`HTTP Server is running on PORT 3000`));
